@@ -114,17 +114,27 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
 
     // Prepare attachments for nodemailer
     const attachments = [];
-    for (const filePath of validatedArgs.attachments) {
-        if (!fs.existsSync(filePath)) {
-            throw new Error(`File does not exist: ${filePath}`);
+    for (const attachment of validatedArgs.attachments) {
+        // Support both file paths (string) and Buffer objects
+        if (typeof attachment === 'string') {
+            // Original behavior: file path
+            if (!fs.existsSync(attachment)) {
+                throw new Error(`File does not exist: ${attachment}`);
+            }
+            attachments.push({
+                filename: path.basename(attachment),
+                path: attachment
+            });
+        } else if (attachment.content) {
+            // New behavior: Buffer/base64 content
+            attachments.push({
+                filename: attachment.filename,
+                content: attachment.content,
+                contentType: attachment.contentType || 'application/octet-stream'
+            });
+        } else {
+            throw new Error('Invalid attachment format');
         }
-        
-        const fileName = path.basename(filePath);
-        
-        attachments.push({
-            filename: fileName,
-            path: filePath
-        });
     }
 
     const mailOptions = {

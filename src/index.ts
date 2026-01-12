@@ -204,6 +204,17 @@ const SendEmailSchema = z.object({
     attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
 });
 
+const UpdateDraftSchema = z.object({
+    draftId: z.string().describe("ID of the draft to update"),
+    to: z.array(z.string()).optional().describe("List of recipient email addresses"),
+    subject: z.string().optional().describe("Email subject"),
+    body: z.string().optional().describe("Email body content"),
+    htmlBody: z.string().optional().describe("HTML version of the email body"),
+    mimeType: z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional().describe("Email content type"),
+    cc: z.array(z.string()).optional().describe("List of CC recipients"),
+    bcc: z.array(z.string()).optional().describe("List of BCC recipients"),
+});
+
 const ReadEmailSchema = z.object({
     messageId: z.string().describe("ID of the email message to retrieve"),
 });
@@ -351,6 +362,11 @@ async function main() {
                 inputSchema: zodToJsonSchema(SendEmailSchema),
             },
             {
+                name: "update_draft",
+                description: "Updates the content of an existing Gmail draft while preserving thread context and attachments",
+                inputSchema: zodToJsonSchema(UpdateDraftSchema),
+            },
+            {
                 name: "read_email",
                 description: "Retrieves the content of a specific email",
                 inputSchema: zodToJsonSchema(ReadEmailSchema),
@@ -440,6 +456,129 @@ async function main() {
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { name, arguments: args } = request.params;
+
+        async function handleUpdateDraft(validatedArgs: any) {
+            try {
+                // 1. Fetch existing draft to get current values and attachments
+                const existingDraftResponse = await gmail.users.drafts.get({
+                    userId: 'me',
+                    id: validatedArgs.draftId,
+                    format: 'full'
+                });
+
+                const existingMessage = existingDraftResponse.data.message;
+                if (!existingMessage || !existingMessage.payload) {
+                    throw new Error('Could not retrieve existing draft');
+                }
+
+                const existingHeaders = existingMessage.payload.headers || [];
+
+                // Helper to extract header value (case-insensitive)
+                const getHeader = (name: string): string | undefined => {
+                    const header = existingHeaders.find(h => h.name?.toLowerCase() === name.toLowerCase());
+                    return header?.value || undefined;
+                };
+
+                // 2. Extract existing attachments
+                const attachments: Array<{filename: string, content: Buffer, contentType: string}> = [];
+
+                const processAttachmentParts = async (part: any) => {
+                    if (part.body && part.body.attachmentId) {
+                        // Download attachment data
+                        const attachmentResponse = await gmail.users.messages.attachments.get({
+                            userId: 'me',
+                            messageId: existingMessage.id!,
+                            id: part.body.attachmentId
+                        });
+
+                        const attachmentData = attachmentResponse.data.data;
+                        if (attachmentData) {
+                            attachments.push({
+                                filename: part.filename || `attachment-${part.body.attachmentId}`,
+                                content: Buffer.from(attachmentData, 'base64url'),
+                                contentType: part.mimeType || 'application/octet-stream'
+                            });
+                        }
+                    }
+
+                    // Recursively process nested parts
+                    if (part.parts) {
+                        for (const subpart of part.parts) {
+                            await processAttachmentParts(subpart);
+                        }
+                    }
+                };
+
+                if (existingMessage.payload) {
+                    await processAttachmentParts(existingMessage.payload);
+                }
+
+                // 3. Merge new values with existing values (new values take precedence)
+                const to = validatedArgs.to || (getHeader('To')?.split(',').map((e: string) => e.trim()) || []);
+                const cc = validatedArgs.cc || (getHeader('Cc')?.split(',').map((e: string) => e.trim()) || undefined);
+                const bcc = validatedArgs.bcc || (getHeader('Bcc')?.split(',').map((e: string) => e.trim()) || undefined);
+                const subject = validatedArgs.subject !== undefined ? validatedArgs.subject : (getHeader('Subject') || '');
+                const body = validatedArgs.body !== undefined ? validatedArgs.body : '';
+                const mimeType = validatedArgs.mimeType || 'text/plain';
+                const threadId = existingMessage.threadId;
+
+                // 4. Build the updated message
+                const emailData = {
+                    to,
+                    cc,
+                    bcc,
+                    subject,
+                    body,
+                    htmlBody: validatedArgs.htmlBody,
+                    mimeType,
+                    threadId,
+                    inReplyTo: getHeader('In-Reply-To'),
+                    attachments: attachments.length > 0 ? attachments : undefined
+                };
+
+                // Use nodemailer if there are attachments, otherwise use simple message
+                const message = attachments.length > 0
+                    ? await createEmailWithNodemailer(emailData)
+                    : createEmailMessage(emailData);
+
+                // 5. Encode and update the draft
+                const encodedMessage = Buffer.from(message).toString('base64')
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/, '');
+
+                const response = await gmail.users.drafts.update({
+                    userId: 'me',
+                    id: validatedArgs.draftId,
+                    requestBody: {
+                        message: {
+                            raw: encodedMessage,
+                            threadId: threadId
+                        },
+                    },
+                });
+
+                const attachmentCount = attachments.length;
+                const attachmentMsg = attachmentCount > 0
+                    ? ` (${attachmentCount} attachment${attachmentCount > 1 ? 's' : ''} preserved)`
+                    : '';
+
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Draft updated successfully with ID: ${response.data.id}${attachmentMsg}`
+                    }]
+                };
+
+            } catch (error: any) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Error updating draft: ${error.message}`
+                    }],
+                };
+            }
+        }
 
         async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
             let message: string;
@@ -600,6 +739,11 @@ async function main() {
                     const validatedArgs = SendEmailSchema.parse(args);
                     const action = name === "send_email" ? "send" : "draft";
                     return await handleEmailAction(action, validatedArgs);
+                }
+
+                case "update_draft": {
+                    const validatedArgs = UpdateDraftSchema.parse(args);
+                    return await handleUpdateDraft(validatedArgs);
                 }
 
                 case "read_email": {
