@@ -224,6 +224,10 @@ const SearchEmailsSchema = z.object({
     maxResults: z.number().optional().describe("Maximum number of results to return"),
 });
 
+const ListDraftsSchema = z.object({
+    maxResults: z.number().optional().describe("Maximum number of drafts to return (default: 100)"),
+});
+
 // Updated schema to include removeLabelIds
 const ModifyEmailSchema = z.object({
     messageId: z.string().describe("ID of the email message to modify"),
@@ -343,10 +347,17 @@ async function main() {
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Server implementation
-    const server = new Server({
-        name: "gmail",
-        version: "1.0.0",
-    });
+    const server = new Server(
+        {
+            name: "gmail",
+            version: "1.0.0",
+        },
+        {
+            capabilities: {
+                tools: {},
+            },
+        }
+    );
 
     // Tool handlers
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -375,6 +386,11 @@ async function main() {
                 name: "search_emails",
                 description: "Searches for emails using Gmail search syntax",
                 inputSchema: zodToJsonSchema(SearchEmailsSchema),
+            },
+            {
+                name: "list_drafts",
+                description: "Lists Gmail drafts with their draft IDs and message IDs. Use this to get draft IDs needed for update_draft.",
+                inputSchema: zodToJsonSchema(ListDraftsSchema),
             },
             {
                 name: "modify_email",
@@ -844,6 +860,44 @@ async function main() {
                                 type: "text",
                                 text: results.map(r =>
                                     `ID: ${r.id}\nSubject: ${r.subject}\nFrom: ${r.from}\nDate: ${r.date}\n`
+                                ).join('\n'),
+                            },
+                        ],
+                    };
+                }
+
+                case "list_drafts": {
+                    const validatedArgs = ListDraftsSchema.parse(args);
+                    const response = await gmail.users.drafts.list({
+                        userId: 'me',
+                        maxResults: validatedArgs.maxResults || 100,
+                    });
+
+                    const drafts = response.data.drafts || [];
+                    const results = await Promise.all(
+                        drafts.map(async (draft) => {
+                            const detail = await gmail.users.drafts.get({
+                                userId: 'me',
+                                id: draft.id!,
+                                format: 'metadata',
+                            });
+                            const headers = detail.data.message?.payload?.headers || [];
+                            return {
+                                draftId: draft.id,
+                                messageId: draft.message?.id,
+                                subject: headers.find(h => h.name === 'Subject')?.value || '(no subject)',
+                                to: headers.find(h => h.name === 'To')?.value || '(no recipient)',
+                                date: headers.find(h => h.name === 'Date')?.value || '',
+                            };
+                        })
+                    );
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: results.map(r =>
+                                    `Draft ID: ${r.draftId}\nMessage ID: ${r.messageId}\nTo: ${r.to}\nSubject: ${r.subject}\nDate: ${r.date}\n`
                                 ).join('\n'),
                             },
                         ],

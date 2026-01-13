@@ -11,6 +11,7 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 - Send emails with subject, content, **attachments**, and recipients
 - **Full attachment support** - send and receive file attachments
 - **Download email attachments** to local filesystem
+- **Update existing Gmail drafts** programmatically with partial or full content updates
 - Support for HTML emails and multipart messages with both HTML and plain text versions
 - Full support for international characters in subject lines and email content
 - Read email messages by ID with advanced MIME structure handling
@@ -247,7 +248,69 @@ Creates a draft email without sending it. **Also supports attachments**.
 }
 ```
 
-### 3. Read Email (`read_email`)
+### 3. Update Draft (`update_draft`)
+Updates the content of an existing Gmail draft while preserving thread context and attachments metadata. Perfect for workflows where drafts are created with placeholder content (e.g., agent instructions) that need to be replaced with final content.
+
+```json
+{
+  "draftId": "r-1234567890",
+  "body": "This is the updated email content."
+}
+```
+
+**Partial Update Example** (only update subject, preserve other fields):
+```json
+{
+  "draftId": "r-1234567890",
+  "subject": "Updated Subject Line"
+}
+```
+
+**Complete Update Example**:
+```json
+{
+  "draftId": "r-1234567890",
+  "to": ["newrecipient@example.com"],
+  "subject": "Completely Updated Email",
+  "body": "This email has been completely rewritten.",
+  "cc": ["cc@example.com"],
+  "mimeType": "text/plain"
+}
+```
+
+**Parameters:**
+- `draftId` (required): The ID of the draft to update (format: `r-xxx...`)
+- `to` (optional): List of recipient email addresses
+- `subject` (optional): Email subject
+- `body` (optional): Email body content
+- `htmlBody` (optional): HTML version of the email body
+- `mimeType` (optional): Email content type (`text/plain`, `text/html`, or `multipart/alternative`)
+- `cc` (optional): List of CC recipients
+- `bcc` (optional): List of BCC recipients
+
+**Important Notes:**
+- All fields except `draftId` are optional, allowing partial updates
+- Unspecified fields will preserve their existing values from the draft
+- Thread context and reply-to headers are automatically preserved
+- To get a draft ID, use `list_drafts` which returns both draft IDs and message IDs
+
+**Use Case Example:**
+```json
+// Step 1: Create draft with agent instructions
+{
+  "to": ["support@example.com"],
+  "subject": "Support Request",
+  "body": "Agent instructions: Draft email about login issue with password reset problems"
+}
+
+// Step 2: Update draft with final content
+{
+  "draftId": "r-1234567890",
+  "body": "Hi Support Team,\n\nI'm experiencing a login loop issue on my account. Every time I try to reset my password, I receive the reset email but clicking the link returns me to the login page without allowing me to set a new password.\n\nCould you please help me resolve this?\n\nThank you,\nJohn"
+}
+```
+
+### 4. Read Email (`read_email`)
 Retrieves the content of a specific email by its ID. **Now shows enhanced attachment information**.
 
 ```json
@@ -270,7 +333,7 @@ Attachments (2):
 - spreadsheet.xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 89 KB, ID: BWHkeL8gkUt-j4HDRp6o98g_juI...)
 ```
 
-### 4. **Download Attachment (`download_attachment`)**
+### 5. **Download Attachment (`download_attachment`)**
 **NEW**: Downloads email attachments to your local filesystem.
 
 ```json
@@ -288,7 +351,7 @@ Parameters:
 - `savePath`: Directory to save the file (optional, defaults to current directory)
 - `filename`: Custom filename (optional, uses original filename if not provided)
 
-### 5. Search Emails (`search_emails`)
+### 6. Search Emails (`search_emails`)
 Searches for emails using Gmail search syntax.
 
 ```json
@@ -298,7 +361,7 @@ Searches for emails using Gmail search syntax.
 }
 ```
 
-### 6. Modify Email (`modify_email`)
+### 7. Modify Email (`modify_email`)
 Adds or removes labels from emails (move to different folders, archive, etc.).
 
 ```json
@@ -309,7 +372,7 @@ Adds or removes labels from emails (move to different folders, archive, etc.).
 }
 ```
 
-### 7. Delete Email (`delete_email`)
+### 8. Delete Email (`delete_email`)
 Permanently deletes an email.
 
 ```json
@@ -318,14 +381,14 @@ Permanently deletes an email.
 }
 ```
 
-### 8. List Email Labels (`list_email_labels`)
+### 9. List Email Labels (`list_email_labels`)
 Retrieves all available Gmail labels.
 
 ```json
 {}
 ```
 
-### 9. Create Label (`create_label`)
+### 10. Create Label (`create_label`)
 Creates a new Gmail label.
 
 ```json
@@ -336,7 +399,7 @@ Creates a new Gmail label.
 }
 ```
 
-### 10. Update Label (`update_label`)
+### 11. Update Label (`update_label`)
 Updates an existing Gmail label.
 
 ```json
@@ -348,7 +411,7 @@ Updates an existing Gmail label.
 }
 ```
 
-### 11. Delete Label (`delete_label`)
+### 12. Delete Label (`delete_label`)
 Deletes a Gmail label.
 
 ```json
@@ -357,7 +420,7 @@ Deletes a Gmail label.
 }
 ```
 
-### 12. Get or Create Label (`get_or_create_label`)
+### 13. Get or Create Label (`get_or_create_label`)
 Gets an existing label by name or creates it if it doesn't exist.
 
 ```json
@@ -368,7 +431,7 @@ Gets an existing label by name or creates it if it doesn't exist.
 }
 ```
 
-### 13. Batch Modify Emails (`batch_modify_emails`)
+### 14. Batch Modify Emails (`batch_modify_emails`)
 Modifies labels for multiple emails in efficient batches.
 
 ```json
@@ -380,7 +443,7 @@ Modifies labels for multiple emails in efficient batches.
 }
 ```
 
-### 14. Batch Delete Emails (`batch_delete_emails`)
+### 15. Batch Delete Emails (`batch_delete_emails`)
 Permanently deletes multiple emails in efficient batches.
 
 ```json
@@ -390,7 +453,7 @@ Permanently deletes multiple emails in efficient batches.
 }
 ```
 
-### 14. Create Filter (`create_filter`)
+### 16. Create Filter (`create_filter`)
 Creates a new Gmail filter with custom criteria and actions.
 
 ```json
@@ -406,14 +469,14 @@ Creates a new Gmail filter with custom criteria and actions.
 }
 ```
 
-### 15. List Filters (`list_filters`)
+### 17. List Filters (`list_filters`)
 Retrieves all Gmail filters.
 
 ```json
 {}
 ```
 
-### 16. Get Filter (`get_filter`)
+### 18. Get Filter (`get_filter`)
 Gets details of a specific Gmail filter.
 
 ```json
@@ -422,7 +485,7 @@ Gets details of a specific Gmail filter.
 }
 ```
 
-### 17. Delete Filter (`delete_filter`)
+### 19. Delete Filter (`delete_filter`)
 Deletes a Gmail filter.
 
 ```json
@@ -431,7 +494,7 @@ Deletes a Gmail filter.
 }
 ```
 
-### 18. Create Filter from Template (`create_filter_from_template`)
+### 20. Create Filter from Template (`create_filter_from_template`)
 Creates a filter using pre-defined templates for common scenarios.
 
 ```json
