@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "node",
+      "args": [
+        "/Users/ben-afshar/.gmail-mcp/Gmail-MCP-Server/dist/index.js"
+      ]
+    }
+  }
+}
